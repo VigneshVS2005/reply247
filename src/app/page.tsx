@@ -1,0 +1,612 @@
+"use client";
+
+import { useState, useEffect } from 'react';
+
+interface Contact {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface SentLog {
+  id: string;
+  to: string;
+  subject: string;
+  date: string;
+}
+
+export default function Home() {
+  // Authentication states
+  const [accessCode, setAccessCode] = useState('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  // Email form states
+  const [to, setTo] = useState('');
+  const [subject, setSubject] = useState('');
+  const [text, setText] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Local storage states
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [sentLogs, setSentLogs] = useState<SentLog[]>([]);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [showAddContact, setShowAddContact] = useState(false);
+
+  // Tab state for desktop/preview split
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
+
+  // Timezone choice for displaying logs
+  const [timezoneChoice, setTimezoneChoice] = useState<'local' | 'ist' | 'utc'>('local');
+
+  const formatLogDate = (dateString: string) => {
+    try {
+      const dateObj = new Date(dateString);
+      if (isNaN(dateObj.getTime())) return dateString;
+      
+      if (timezoneChoice === 'ist') {
+        return dateObj.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) + ' IST';
+      } else if (timezoneChoice === 'utc') {
+        return dateObj.toUTCString().replace('GMT', 'UTC');
+      } else {
+        return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+    } catch (e) {
+      return dateString;
+    }
+  };
+
+  // Check auth and load local data on mount
+  useEffect(() => {
+    const savedCode = localStorage.getItem('reply247_access_code');
+    if (savedCode) {
+      setAccessCode(savedCode);
+      setIsAuthenticated(true);
+    }
+
+    const savedContacts = localStorage.getItem('reply247_contacts');
+    if (savedContacts) {
+      setContacts(JSON.parse(savedContacts));
+    } else {
+      // Default sample contacts to help the user get started
+      const defaults = [
+        { id: '1', name: 'Friend', email: 'friend@example.com' },
+        { id: '2', name: 'Work', email: 'work@example.com' },
+      ];
+      setContacts(defaults);
+      localStorage.setItem('reply247_contacts', JSON.stringify(defaults));
+    }
+
+    const savedLogs = localStorage.getItem('reply247_logs');
+    if (savedLogs) {
+      setSentLogs(JSON.parse(savedLogs));
+    }
+  }, []);
+
+  // Handle access code validation
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessCode.trim()) {
+      setAuthError('Please enter the access code.');
+      return;
+    }
+    // We will save it locally. The backend will actually validate it on the API call.
+    localStorage.setItem('reply247_access_code', accessCode);
+    setIsAuthenticated(true);
+    setAuthError('');
+  };
+
+  // Logout/clear code
+  const handleLogout = () => {
+    localStorage.removeItem('reply247_access_code');
+    setAccessCode('');
+    setIsAuthenticated(false);
+  };
+
+  // Add a new contact
+  const handleAddContact = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newContactName.trim() || !newContactEmail.trim()) return;
+
+    const newContact: Contact = {
+      id: Date.now().toString(),
+      name: newContactName,
+      email: newContactEmail,
+    };
+
+    const updated = [...contacts, newContact];
+    setContacts(updated);
+    localStorage.setItem('reply247_contacts', JSON.stringify(updated));
+    setNewContactName('');
+    setNewContactEmail('');
+    setShowAddContact(false);
+  };
+
+  // Delete a contact
+  const handleDeleteContact = (id: string) => {
+    const updated = contacts.filter(c => c.id !== id);
+    setContacts(updated);
+    localStorage.setItem('reply247_contacts', JSON.stringify(updated));
+  };
+
+  // Clear sent logs
+  const handleClearLogs = () => {
+    setSentLogs([]);
+    localStorage.removeItem('reply247_logs');
+  };
+
+  // Send Email function
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!to.trim() || !text.trim()) {
+      setErrorMessage('Please fill in recipient and message content.');
+      setStatus('error');
+      return;
+    }
+
+    setStatus('sending');
+    setErrorMessage('');
+
+    try {
+      const response = await fetch('/api/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to,
+          subject,
+          text,
+          accessCode,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Authentication failed on server
+          localStorage.removeItem('reply247_access_code');
+          setIsAuthenticated(false);
+          setAuthError('Your access code is incorrect. Please re-authenticate.');
+          throw new Error('Invalid access code.');
+        }
+        throw new Error(data.error || 'Failed to send email.');
+      }
+
+      // Success
+      setStatus('success');
+      
+      // Update history log
+      const newLog: SentLog = {
+        id: Date.now().toString(),
+        to,
+        subject,
+        date: new Date().toISOString(),
+      };
+      const updatedLogs = [newLog, ...sentLogs].slice(0, 50); // limit to 50 logs
+      setSentLogs(updatedLogs);
+      localStorage.setItem('reply247_logs', JSON.stringify(updatedLogs));
+
+      // Reset form fields except recipient (in case they want to email again)
+      setSubject('');
+      setText('');
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'An unexpected error occurred while sending.');
+      setStatus('error');
+    }
+  };
+
+  // Render a live preview of the wrapped HTML email template
+  const getPreviewHTML = () => {
+    const formattedText = text.replace(/\n/g, '<br/>') || '[Your message content will appear here]';
+    const emailSubject = subject || '[Your Subject]';
+    return `
+      <html>
+        <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background-color:#f9fafb;margin:0;padding:20px;color:#111827;">
+          <div style="max-width:600px;margin:20px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);border:1px solid #e5e7eb;">
+            <div style="background:linear-gradient(135deg,#1e1b4b 0%,#311042 100%);padding:25px;border-bottom:3px solid #8b5cf6;">
+              <h1 style="color:#ffffff;font-size:20px;font-weight:700;margin:0;letter-spacing:0.05em;">reply247</h1>
+              <p style="color:#a78bfa;font-size:11px;margin:5px 0 0 0;text-transform:uppercase;letter-spacing:0.1em;">Secure Communication Portal</p>
+            </div>
+            <div style="padding:30px;line-height:1.6;font-size:15px;color:#374151;">
+              <div style="display:inline-block;padding:2px 10px;background-color:#e0e7ff;color:#4338ca;border-radius:9999px;font-size:10px;font-weight:600;margin-bottom:15px;">Official Message</div>
+              <div style="font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid #f3f4f6;">
+                <strong>From:</strong> monkeykokkikumar@gmail.com<br>
+                <strong>Subject:</strong> ${emailSubject}
+              </div>
+              <div style="min-height:80px;white-space:pre-wrap;">${formattedText}</div>
+            </div>
+            <div style="background-color:#f3f4f6;padding:15px;text-align:center;font-size:11px;color:#6b7280;border-top:1px solid #e5e7eb;">
+              This message was sent securely via <a href="#" style="color:#6366f1;text-decoration:none;">reply247</a>.<br>
+              Reply directly to this email to get in touch.
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  // ----------------------------------------------------
+  // RENDER: LOGIN / PASSCODE SCREEN
+  // ----------------------------------------------------
+  if (!isAuthenticated) {
+    return (
+      <main className="flex-1 flex items-center justify-center p-6 min-h-screen">
+        <div className="w-full max-w-md p-8 rounded-2xl glass-panel relative overflow-hidden">
+          {/* Subtle neon glowing details */}
+          <div className="absolute -top-10 -right-10 w-40 h-40 bg-purple-600 rounded-full blur-3xl opacity-20"></div>
+          <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-pink-600 rounded-full blur-3xl opacity-20"></div>
+
+          <div className="text-center mb-8 relative z-10">
+            <h1 className="text-4xl font-extrabold tracking-tight text-white mb-2 text-glow">
+              reply<span className="text-purple-400">247</span>
+            </h1>
+            <p className="text-sm text-zinc-400">
+              Authorized access only. Enter secret portal key.
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-6 relative z-10">
+            <div>
+              <label htmlFor="passcode" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                Secret Access Code
+              </label>
+              <input
+                id="passcode"
+                type="password"
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value)}
+                placeholder="Enter access code..."
+                className="w-full px-4 py-3 bg-zinc-900/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 glow-input"
+                autoFocus
+              />
+              {authError && (
+                <p className="text-xs text-rose-500 mt-2 font-medium flex items-center">
+                  ⚠️ {authError}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-semibold rounded-xl transition duration-200 shadow-lg shadow-purple-600/20 active:scale-[0.98]"
+            >
+              Enter Portal
+            </button>
+          </form>
+
+          <footer className="mt-8 text-center text-xs text-zinc-500 relative z-10">
+            Shared private utility for registered users.
+          </footer>
+        </div>
+      </main>
+    );
+  }
+
+  // ----------------------------------------------------
+  // RENDER: DASHBOARD SCREEN
+  // ----------------------------------------------------
+  return (
+    <div className="flex-1 flex flex-col w-full max-w-7xl mx-auto p-4 md:p-8 space-y-6 min-h-screen">
+      
+      {/* Header bar */}
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-6 rounded-2xl glass-panel relative overflow-hidden space-y-4 sm:space-y-0">
+        <div className="absolute -top-12 left-1/4 w-32 h-32 bg-purple-500 rounded-full blur-3xl opacity-10"></div>
+        <div>
+          <h1 className="text-3xl font-extrabold text-white text-glow">
+            reply<span className="text-purple-400">247</span>
+          </h1>
+          <p className="text-xs text-zinc-400 mt-1 flex items-center">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse"></span>
+            Sender Active: <span className="text-zinc-200 font-mono ml-1">monkeykokkikumar@gmail.com</span>
+          </p>
+        </div>
+        <div className="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-end">
+          <span className="text-xs px-3 py-1 bg-zinc-800 text-zinc-300 rounded-full border border-zinc-700">
+            Private Node
+          </span>
+          <button
+            onClick={handleLogout}
+            className="text-xs px-3 py-1.5 bg-rose-950/40 text-rose-300 border border-rose-900/50 hover:bg-rose-900/60 hover:text-white rounded-lg transition duration-200"
+          >
+            Lock Terminal
+          </button>
+        </div>
+      </header>
+
+      {/* Main workspace layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 items-start">
+        
+        {/* LEFT COLUMN: Compose and Form */}
+        <section className="lg:col-span-2 glass-panel rounded-2xl p-6 md:p-8 space-y-6">
+          <div className="flex justify-between items-center border-b border-zinc-800 pb-4">
+            <h2 className="text-xl font-bold text-white">Compose Secure Mail</h2>
+            <div className="flex bg-zinc-900 p-1 rounded-lg border border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setActiveTab('edit')}
+                className={`text-xs px-3 py-1.5 rounded-md font-semibold transition ${
+                  activeTab === 'edit' ? 'bg-purple-600 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Editor
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('preview')}
+                className={`text-xs px-3 py-1.5 rounded-md font-semibold transition ${
+                  activeTab === 'preview' ? 'bg-purple-600 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                HTML Preview
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'edit' ? (
+            <form onSubmit={handleSendEmail} className="space-y-5">
+              <div>
+                <label htmlFor="to" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                  Recipient Email
+                </label>
+                <div className="relative">
+                  <input
+                    id="to"
+                    type="email"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full px-4 py-3 bg-zinc-950/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 glow-input"
+                    required
+                  />
+                  {to && (
+                    <button
+                      type="button"
+                      onClick={() => setTo('')}
+                      className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="subject" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                  Email Subject
+                </label>
+                <input
+                  id="subject"
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Enter email subject line..."
+                  className="w-full px-4 py-3 bg-zinc-950/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 glow-input"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="text" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                  Message Body
+                </label>
+                <textarea
+                  id="text"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Type your professional email message here..."
+                  rows={8}
+                  className="w-full px-4 py-3 bg-zinc-950/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 glow-input resize-y font-sans"
+                  required
+                />
+              </div>
+
+              {/* Status Display */}
+              {status === 'sending' && (
+                <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-900/50 flex items-center space-x-3 text-purple-300">
+                  <svg className="animate-spin h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-sm font-medium">Encrypting and routing via monkeykokkikumar@gmail.com...</span>
+                </div>
+              )}
+
+              {status === 'success' && (
+                <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-900/50 flex items-center space-x-3 text-emerald-300">
+                  <span className="text-xl">✓</span>
+                  <span className="text-sm font-medium">Email dispatched successfully! Recipient will receive it in professional layout.</span>
+                </div>
+              )}
+
+              {status === 'error' && (
+                <div className="p-4 rounded-xl bg-rose-950/20 border border-rose-900/50 flex flex-col text-rose-300">
+                  <span className="text-sm font-semibold flex items-center">
+                    <span className="text-xl mr-2">✕</span> Send Action Failed
+                  </span>
+                  <span className="text-xs text-rose-400 mt-1">{errorMessage}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={status === 'sending'}
+                className={`w-full py-4 px-6 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-bold rounded-xl transition duration-200 shadow-lg shadow-purple-600/10 active:scale-[0.99] flex items-center justify-center space-x-2 ${
+                  status === 'sending' ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <span>Dispatch Professional Email</span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                </svg>
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-zinc-400">
+                This is a live mockup showing how your email will be compiled into the professional HTML template.
+              </p>
+              <div className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950 p-2">
+                <iframe
+                  srcDoc={getPreviewHTML()}
+                  title="Email Template Live Preview"
+                  className="w-full h-[450px] bg-white rounded-lg"
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* RIGHT COLUMN: Contacts and Logs */}
+        <div className="space-y-6">
+          
+          {/* Quick Contacts */}
+          <section className="glass-panel rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center">
+                👤 Quick Recipient List
+              </h3>
+              <button
+                onClick={() => setShowAddContact(!showAddContact)}
+                className="text-xs text-purple-400 hover:text-purple-300 font-semibold"
+              >
+                {showAddContact ? 'Cancel' : '+ Add New'}
+              </button>
+            </div>
+
+            {showAddContact && (
+              <form onSubmit={handleAddContact} className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 space-y-3">
+                <input
+                  type="text"
+                  placeholder="Contact Name (e.g. Boss)"
+                  value={newContactName}
+                  onChange={(e) => setNewContactName(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white"
+                  required
+                />
+                <input
+                  type="email"
+                  placeholder="email@example.com"
+                  value={newContactEmail}
+                  onChange={(e) => setNewContactEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white"
+                  required
+                />
+                <button
+                  type="submit"
+                  className="w-full py-1.5 bg-purple-650 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg"
+                >
+                  Save Recipient
+                </button>
+              </form>
+            )}
+
+            <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+              {contacts.length === 0 ? (
+                <p className="text-xs text-zinc-500 text-center py-4">No recipients saved yet.</p>
+              ) : (
+                contacts.map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="flex justify-between items-center p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 hover:border-purple-900/40 hover:bg-purple-950/5 transition cursor-pointer"
+                    onClick={() => setTo(contact.email)}
+                  >
+                    <div className="overflow-hidden mr-2">
+                      <div className="text-xs font-bold text-white truncate">{contact.name}</div>
+                      <div className="text-[10px] text-zinc-400 font-mono truncate">{contact.email}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteContact(contact.id);
+                      }}
+                      className="text-zinc-500 hover:text-rose-400 p-1 text-xs"
+                      title="Delete contact"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          {/* Session Logs (Privacy First) */}
+          <section className="glass-panel rounded-2xl p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-zinc-800 pb-3 gap-2">
+              <h3 className="text-base font-bold text-white flex items-center">
+                📋 Sent Logs
+              </h3>
+              <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
+                <div className="flex bg-zinc-950 p-0.5 rounded border border-zinc-800 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setTimezoneChoice('local')}
+                    className={`px-1.5 py-0.5 rounded ${timezoneChoice === 'local' ? 'bg-purple-650 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-350'}`}
+                  >
+                    Local
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimezoneChoice('ist')}
+                    className={`px-1.5 py-0.5 rounded ${timezoneChoice === 'ist' ? 'bg-purple-650 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-305'}`}
+                  >
+                    IST
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimezoneChoice('utc')}
+                    className={`px-1.5 py-0.5 rounded ${timezoneChoice === 'utc' ? 'bg-purple-650 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-305'}`}
+                  >
+                    UTC
+                  </button>
+                </div>
+                {sentLogs.length > 0 && (
+                  <button
+                    onClick={handleClearLogs}
+                    className="text-[10px] text-zinc-500 hover:text-zinc-300 font-semibold"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+              {sentLogs.length === 0 ? (
+                <p className="text-xs text-zinc-500 text-center py-4">No records in local session.</p>
+              ) : (
+                sentLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-2.5 rounded-lg bg-zinc-900/30 border border-zinc-850 hover:bg-zinc-900/50 transition text-left"
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-purple-400 font-semibold truncate max-w-[120px]">
+                        To: {log.to}
+                      </span>
+                      <span className="text-[9px] text-zinc-500 font-mono" title={new Date(log.date).toLocaleString()}>
+                        {formatLogDate(log.date)}
+                      </span>
+                    </div>
+                    <p className="text-xs font-medium text-white truncate mt-1">{log.subject}</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-[9px] text-zinc-500 text-center leading-normal">
+              🛡️ Privacy Note: Sent logs are saved locally in this browser storage only.
+            </p>
+          </section>
+
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
