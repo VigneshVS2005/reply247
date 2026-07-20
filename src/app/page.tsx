@@ -58,44 +58,64 @@ export default function Home() {
     }
   };
 
-  // Check auth and load local data on mount
+  // Load database data from API routes
+  const loadData = async (code: string) => {
+    try {
+      const headers = { Authorization: `Bearer ${code}` };
+      
+      const contactsRes = await fetch('/api/contacts', { headers });
+      if (contactsRes.ok) {
+        const data = await contactsRes.json();
+        setContacts(data.contacts || []);
+      }
+      
+      const logsRes = await fetch('/api/logs', { headers });
+      if (logsRes.ok) {
+        const data = await logsRes.json();
+        setSentLogs(data.logs || []);
+      }
+    } catch (err) {
+      console.error('Failed to load database data:', err);
+    }
+  };
+
+  // Check auth and load database data on mount
   useEffect(() => {
     const savedCode = localStorage.getItem('reply247_access_code');
     if (savedCode) {
       setAccessCode(savedCode);
       setIsAuthenticated(true);
-    }
-
-    const savedContacts = localStorage.getItem('reply247_contacts');
-    if (savedContacts) {
-      setContacts(JSON.parse(savedContacts));
-    } else {
-      // Default sample contacts to help the user get started
-      const defaults = [
-        { id: '1', name: 'Friend', email: 'friend@example.com' },
-        { id: '2', name: 'Work', email: 'work@example.com' },
-      ];
-      setContacts(defaults);
-      localStorage.setItem('reply247_contacts', JSON.stringify(defaults));
-    }
-
-    const savedLogs = localStorage.getItem('reply247_logs');
-    if (savedLogs) {
-      setSentLogs(JSON.parse(savedLogs));
+      loadData(savedCode);
     }
   }, []);
 
-  // Handle access code validation
-  const handleLogin = (e: React.FormEvent) => {
+  // Handle access code validation via server auth
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!accessCode.trim()) {
       setAuthError('Please enter the access code.');
       return;
     }
-    // We will save it locally. The backend will actually validate it on the API call.
-    localStorage.setItem('reply247_access_code', accessCode);
-    setIsAuthenticated(true);
+    
     setAuthError('');
+    try {
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: accessCode }),
+      });
+      
+      if (!response.ok) {
+        setAuthError('Invalid access code.');
+        return;
+      }
+      
+      localStorage.setItem('reply247_access_code', accessCode);
+      setIsAuthenticated(true);
+      loadData(accessCode);
+    } catch (err) {
+      setAuthError('Authentication failed. Server could not verify passcode.');
+    }
   };
 
   // Logout/clear code
@@ -105,8 +125,8 @@ export default function Home() {
     setIsAuthenticated(false);
   };
 
-  // Add a new contact
-  const handleAddContact = (e: React.FormEvent) => {
+  // Add a new contact and sync with DB
+  const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContactName.trim() || !newContactEmail.trim()) return;
 
@@ -118,23 +138,58 @@ export default function Home() {
 
     const updated = [...contacts, newContact];
     setContacts(updated);
-    localStorage.setItem('reply247_contacts', JSON.stringify(updated));
     setNewContactName('');
     setNewContactEmail('');
     setShowAddContact(false);
+
+    try {
+      await fetch('/api/contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessCode}`,
+        },
+        body: JSON.stringify({ contacts: updated }),
+      });
+    } catch (err) {
+      console.error('Failed to sync contacts with database:', err);
+    }
   };
 
-  // Delete a contact
-  const handleDeleteContact = (id: string) => {
+  // Delete a contact and sync with DB
+  const handleDeleteContact = async (id: string) => {
     const updated = contacts.filter(c => c.id !== id);
     setContacts(updated);
-    localStorage.setItem('reply247_contacts', JSON.stringify(updated));
+
+    try {
+      await fetch('/api/contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessCode}`,
+        },
+        body: JSON.stringify({ contacts: updated }),
+      });
+    } catch (err) {
+      console.error('Failed to sync contacts with database:', err);
+    }
   };
 
-  // Clear sent logs
-  const handleClearLogs = () => {
+  // Clear sent logs and sync with DB
+  const handleClearLogs = async () => {
     setSentLogs([]);
-    localStorage.removeItem('reply247_logs');
+    try {
+      await fetch('/api/logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessCode}`,
+        },
+        body: JSON.stringify({ logs: [] }),
+      });
+    } catch (err) {
+      console.error('Failed to sync logs with database:', err);
+    }
   };
 
   // Send Email function
@@ -188,7 +243,19 @@ export default function Home() {
       };
       const updatedLogs = [newLog, ...sentLogs].slice(0, 50); // limit to 50 logs
       setSentLogs(updatedLogs);
-      localStorage.setItem('reply247_logs', JSON.stringify(updatedLogs));
+
+      try {
+        await fetch('/api/logs', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessCode}`,
+          },
+          body: JSON.stringify({ logs: updatedLogs }),
+        });
+      } catch (err) {
+        console.error('Failed to sync logs with database:', err);
+      }
 
       // Reset form fields except recipient (in case they want to email again)
       setSubject('');
