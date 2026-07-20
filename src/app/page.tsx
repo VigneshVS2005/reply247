@@ -1,5 +1,6 @@
 "use client";
 
+// Triggering auto Vercel redeploy to activate connected KV Database
 import { useState, useEffect } from 'react';
 
 interface Contact {
