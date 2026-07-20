@@ -70,12 +70,18 @@ export default function Home() {
       if (contactsRes.ok) {
         const data = await contactsRes.json();
         setContacts(data.contacts || []);
+      } else if (contactsRes.status === 401) {
+        handleLogout();
+        return;
       }
       
       const logsRes = await fetch('/api/logs', { headers });
       if (logsRes.ok) {
         const data = await logsRes.json();
         setSentLogs(data.logs || []);
+      } else if (logsRes.status === 401) {
+        handleLogout();
+        return;
       }
 
       // Check DB connection status
