@@ -38,6 +38,9 @@ export default function Home() {
   // Tab state for desktop/preview split
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
 
+  // DB connection status
+  const [dbStatus, setDbStatus] = useState<{ status: string; type: string } | null>(null);
+
   // Timezone choice for displaying logs
   const [timezoneChoice, setTimezoneChoice] = useState<'local' | 'ist' | 'utc'>('local');
 
@@ -73,6 +76,13 @@ export default function Home() {
       if (logsRes.ok) {
         const data = await logsRes.json();
         setSentLogs(data.logs || []);
+      }
+
+      // Check DB connection status
+      const statusRes = await fetch('/api/db-status');
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        setDbStatus(data);
       }
     } catch (err) {
       console.error('Failed to load database data:', err);
@@ -373,6 +383,15 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-end">
+          {dbStatus && (
+            <span className={`text-xs px-3 py-1 rounded-full border ${
+              dbStatus.status === 'connected' 
+                ? 'bg-emerald-950/40 text-emerald-300 border-emerald-900/50' 
+                : 'bg-amber-950/40 text-amber-300 border-amber-900/50'
+            }`} title={dbStatus.type === 'Vercel KV' ? 'Database connected securely' : 'Warning: Filesystem is read-only on Vercel. Connect KV database to persist.'}>
+              DB: {dbStatus.type}
+            </span>
+          )}
           <span className="text-xs px-3 py-1 bg-zinc-800 text-zinc-300 rounded-full border border-zinc-700">
             Private Node
           </span>
