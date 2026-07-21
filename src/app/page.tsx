@@ -342,6 +342,10 @@ export default function Home() {
     setTimeout(() => setCopiedBoard(false), 2000);
   };
 
+  const handleClearBoard = () => {
+    setBoardText('');
+  };
+
   const handleCopyLogText = (logText: string, logId: string) => {
     navigator.clipboard.writeText(logText);
     setCopiedLogId(logId);
@@ -652,6 +656,15 @@ export default function Home() {
               </div>
               
               <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={handleClearBoard}
+                  disabled={!boardText.trim()}
+                  className={`px-4 py-2 text-xs font-semibold rounded-lg border transition duration-200 bg-rose-950/40 text-rose-300 border-rose-900/50 hover:bg-rose-900/60 active:scale-[0.98] ${!boardText.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  🗑️ Clear Board
+                </button>
+                
                 <button
                   type="button"
                   onClick={handleCopyBoard}
