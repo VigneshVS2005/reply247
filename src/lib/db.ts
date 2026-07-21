@@ -49,7 +49,7 @@ async function kvCall(command: any[]) {
   }
 }
 
-export async function getDbData(key: 'contacts' | 'logs'): Promise<any[]> {
+export async function getDbData(key: 'contacts' | 'logs' | 'board'): Promise<any> {
   const redisUrl = process.env.REDIS_URL;
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -71,11 +71,11 @@ export async function getDbData(key: 'contacts' | 'logs'): Promise<any[]> {
   if (url && token) {
     // Production / Vercel KV connected
     const val = await kvCall(['GET', key]);
-    if (!val) return [];
+    if (!val) return key === 'board' ? null : [];
     try {
       return JSON.parse(val);
     } catch {
-      return [];
+      return key === 'board' ? null : [];
     }
   } else {
     // Local fallback: db.json
@@ -83,14 +83,14 @@ export async function getDbData(key: 'contacts' | 'logs'): Promise<any[]> {
       await fs.access(DB_FILE);
       const content = await fs.readFile(DB_FILE, 'utf8');
       const db = JSON.parse(content);
-      return db[key] || [];
+      return db[key] !== undefined ? db[key] : (key === 'board' ? null : []);
     } catch {
-      return [];
+      return key === 'board' ? null : [];
     }
   }
 }
 
-export async function saveDbData(key: 'contacts' | 'logs', data: any[]): Promise<boolean> {
+export async function saveDbData(key: 'contacts' | 'logs' | 'board', data: any): Promise<boolean> {
   const redisUrl = process.env.REDIS_URL;
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;

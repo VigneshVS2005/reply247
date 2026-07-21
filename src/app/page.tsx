@@ -13,6 +13,7 @@ interface SentLog {
   id: string;
   to: string;
   subject: string;
+  text: string;
   date: string;
 }
 
@@ -44,6 +45,16 @@ export default function Home() {
 
   // Timezone choice for displaying logs
   const [timezoneChoice, setTimezoneChoice] = useState<'local' | 'ist' | 'utc'>('local');
+
+  // Shared secure board states
+  const [boardText, setBoardText] = useState('');
+  const [boardUpdatedAt, setBoardUpdatedAt] = useState('');
+  const [boardSaveStatus, setBoardSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [copiedBoard, setCopiedBoard] = useState(false);
+
+  // Expandable log states
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
 
   const formatLogDate = (dateString: string) => {
     try {
@@ -81,6 +92,16 @@ export default function Home() {
         const data = await logsRes.json();
         setSentLogs(data.logs || []);
       } else if (logsRes.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      const boardRes = await fetch('/api/board', { headers });
+      if (boardRes.ok) {
+        const data = await boardRes.json();
+        setBoardText(data.board?.text || '');
+        setBoardUpdatedAt(data.board?.updatedAt || '');
+      } else if (boardRes.status === 401) {
         handleLogout();
         return;
       }
@@ -256,6 +277,7 @@ export default function Home() {
         id: Date.now().toString(),
         to,
         subject,
+        text,
         date: new Date().toISOString(),
       };
       const updatedLogs = [newLog, ...sentLogs].slice(0, 50); // limit to 50 logs
@@ -282,6 +304,48 @@ export default function Home() {
       setErrorMessage(err.message || 'An unexpected error occurred while sending.');
       setStatus('error');
     }
+  };
+
+  // Secure Board Actions
+  const handleSaveBoard = async () => {
+    setBoardSaveStatus('saving');
+    try {
+      const nowStr = new Date().toISOString();
+      const response = await fetch('/api/board', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessCode}`,
+        },
+        body: JSON.stringify({
+          board: {
+            text: boardText,
+            updatedAt: nowStr,
+          },
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to save board to database');
+
+      setBoardUpdatedAt(nowStr);
+      setBoardSaveStatus('saved');
+      setTimeout(() => setBoardSaveStatus('idle'), 3000);
+    } catch (err) {
+      console.error('Failed to save board:', err);
+      setBoardSaveStatus('error');
+    }
+  };
+
+  const handleCopyBoard = () => {
+    navigator.clipboard.writeText(boardText);
+    setCopiedBoard(true);
+    setTimeout(() => setCopiedBoard(false), 2000);
+  };
+
+  const handleCopyLogText = (logText: string, logId: string) => {
+    navigator.clipboard.writeText(logText);
+    setCopiedLogId(logId);
+    setTimeout(() => setCopiedLogId(null), 2000);
   };
 
   // Render a live preview of the wrapped HTML email template
@@ -553,6 +617,77 @@ export default function Home() {
           )}
         </section>
 
+        {/* Shared Secure Board */}
+        <section className="lg:col-span-2 glass-panel rounded-2xl p-6 md:p-8 space-y-6 relative overflow-hidden">
+          {/* Subtle glow */}
+          <div className="absolute -top-10 -left-10 w-40 h-40 bg-purple-600 rounded-full blur-3xl opacity-10"></div>
+          
+          <div className="flex justify-between items-center border-b border-zinc-800 pb-4">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center">
+                🔒 Shared Secure Board
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1">
+                Whatever is written here is securely shared with anyone who has the access passcode.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <textarea
+              value={boardText}
+              onChange={(e) => setBoardText(e.target.value)}
+              placeholder="Type private notes, credentials, or secret messages here to share securely with your friend..."
+              rows={6}
+              className="w-full px-4 py-3 bg-zinc-950/60 border border-zinc-800 rounded-xl text-white placeholder-zinc-750 glow-input resize-y font-mono text-sm leading-relaxed"
+            />
+
+            <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
+              <div className="text-xs text-zinc-500 font-medium">
+                {boardUpdatedAt ? (
+                  <span>Last updated: <span className="text-zinc-400">{new Date(boardUpdatedAt).toLocaleString()}</span></span>
+                ) : (
+                  <span>No message saved yet.</span>
+                )}
+              </div>
+              
+              <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={handleCopyBoard}
+                  disabled={!boardText.trim()}
+                  className={`px-4 py-2 text-xs font-semibold rounded-lg border transition duration-200 ${
+                    copiedBoard 
+                      ? 'bg-emerald-950/40 text-emerald-300 border-emerald-900/50' 
+                      : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border-zinc-800 active:scale-[0.98]'
+                  } ${!boardText.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {copiedBoard ? '✓ Copied' : '📋 Copy Text'}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={handleSaveBoard}
+                  disabled={boardSaveStatus === 'saving'}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition duration-200 flex items-center space-x-2 active:scale-[0.98] ${
+                    boardSaveStatus === 'saving' 
+                      ? 'bg-purple-650/50 text-white cursor-not-allowed' 
+                      : boardSaveStatus === 'saved'
+                      ? 'bg-emerald-600 text-white shadow shadow-emerald-600/10'
+                      : boardSaveStatus === 'error'
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-purple-650 hover:bg-purple-750 text-white shadow shadow-purple-600/10'
+                   }`}
+                >
+                  <span>
+                    {boardSaveStatus === 'saving' ? 'Saving...' : boardSaveStatus === 'saved' ? '✓ Saved' : boardSaveStatus === 'error' ? '✕ Failed' : '💾 Save Board'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* RIGHT COLUMN: Contacts and Logs */}
         <div className="space-y-6">
           
@@ -671,28 +806,63 @@ export default function Home() {
 
             <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
               {sentLogs.length === 0 ? (
-                <p className="text-xs text-zinc-500 text-center py-4">No records in local session.</p>
+                <p className="text-xs text-zinc-500 text-center py-4">No records found.</p>
               ) : (
-                sentLogs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="p-2.5 rounded-lg bg-zinc-900/30 border border-zinc-850 hover:bg-zinc-900/50 transition text-left"
-                  >
-                    <div className="flex justify-between items-start">
-                      <span className="text-[10px] text-purple-400 font-semibold truncate max-w-[120px]">
-                        To: {log.to}
-                      </span>
-                      <span className="text-[9px] text-zinc-500 font-mono" title={new Date(log.date).toLocaleString()}>
-                        {formatLogDate(log.date)}
-                      </span>
+                sentLogs.map((log) => {
+                  const isExpanded = expandedLogId === log.id;
+                  return (
+                    <div
+                      key={log.id}
+                      onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                      className={`p-3 rounded-lg border transition text-left cursor-pointer ${
+                        isExpanded
+                          ? 'bg-zinc-900/80 border-purple-900/60 shadow-lg shadow-purple-950/10'
+                          : 'bg-zinc-900/30 border-zinc-850 hover:bg-zinc-900/50 hover:border-zinc-800'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <span className="text-[10px] text-purple-400 font-semibold truncate max-w-[140px]">
+                          To: {log.to}
+                        </span>
+                        <span className="text-[9px] text-zinc-500 font-mono" title={new Date(log.date).toLocaleString()}>
+                          {formatLogDate(log.date)}
+                        </span>
+                      </div>
+                      <p className={`text-xs font-medium text-white mt-1 ${isExpanded ? '' : 'truncate'}`}>
+                        {log.subject}
+                      </p>
+                      
+                      {isExpanded && (
+                        <div 
+                          className="mt-3 pt-3 border-t border-zinc-850 space-y-3 cursor-default"
+                          onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details
+                        >
+                          <div className="text-[11px] text-zinc-400 whitespace-pre-wrap bg-zinc-950/70 p-2.5 rounded-lg border border-zinc-900 max-h-40 overflow-y-auto font-sans leading-relaxed">
+                            {log.text || <span className="text-zinc-650 italic">(No message content saved)</span>}
+                          </div>
+                          
+                          {log.text && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyLogText(log.text, log.id)}
+                              className={`w-full py-1.5 text-[10px] font-semibold rounded transition duration-150 ${
+                                copiedLogId === log.id
+                                  ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/50'
+                                  : 'bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800'
+                              }`}
+                            >
+                              {copiedLogId === log.id ? '✓ Message Copied' : '📋 Copy Message'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-xs font-medium text-white truncate mt-1">{log.subject}</p>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
             <p className="text-[9px] text-zinc-500 text-center leading-normal">
-              🛡️ Privacy Note: Sent logs are saved locally in this browser storage only.
+              🛡️ Privacy Note: Sent logs are saved securely in your connected database.
             </p>
           </section>
 
