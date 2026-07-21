@@ -1,9 +1,31 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { createClient } from 'redis';
 
 const DB_FILE = path.join(process.cwd(), 'db.json');
 
-// Helper to make Vercel KV REST API calls
+// Global Redis client cache to prevent connection leakage in serverless environments
+const globalForRedis = globalThis as unknown as { redisClient: any };
+
+async function getRedisClient() {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return null;
+
+  if (!globalForRedis.redisClient) {
+    try {
+      const client = createClient({ url: redisUrl });
+      client.on('error', (err) => console.error('Redis Client Error', err));
+      await client.connect();
+      globalForRedis.redisClient = client;
+    } catch (err) {
+      console.error('Failed to connect to Redis:', err);
+      return null;
+    }
+  }
+  return globalForRedis.redisClient;
+}
+
+// Helper to make Vercel KV REST API calls (fallback)
 async function kvCall(command: any[]) {
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -28,8 +50,23 @@ async function kvCall(command: any[]) {
 }
 
 export async function getDbData(key: 'contacts' | 'logs'): Promise<any[]> {
+  const redisUrl = process.env.REDIS_URL;
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
+
+  if (redisUrl) {
+    try {
+      const client = await getRedisClient();
+      if (client) {
+        const val = await client.get(key);
+        if (val) {
+          return JSON.parse(val);
+        }
+      }
+    } catch (error) {
+      console.error('Redis DB read error:', error);
+    }
+  }
 
   if (url && token) {
     // Production / Vercel KV connected
@@ -54,8 +91,21 @@ export async function getDbData(key: 'contacts' | 'logs'): Promise<any[]> {
 }
 
 export async function saveDbData(key: 'contacts' | 'logs', data: any[]): Promise<boolean> {
+  const redisUrl = process.env.REDIS_URL;
   const url = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
+
+  if (redisUrl) {
+    try {
+      const client = await getRedisClient();
+      if (client) {
+        await client.set(key, JSON.stringify(data));
+        return true;
+      }
+    } catch (error) {
+      console.error('Redis DB write error:', error);
+    }
+  }
 
   if (url && token) {
     // Production / Vercel KV connected
